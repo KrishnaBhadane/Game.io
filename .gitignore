@@ -6,3 +6,9 @@ dist/
 *.local
 *.log
 .DS_Store
+.vscode/
+.idea/
+coverage/
+scratch/
+playwright-report/
+test-results/

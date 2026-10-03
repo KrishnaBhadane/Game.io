@@ -56,7 +56,7 @@ export default function JoinGame() {
   }
 
   return (
-    <section className="narrow">
+    <section className="narrow join-page">
       <h1>Join Game</h1>
       <Card>
         <form noValidate onSubmit={join} className="form-stack">
@@ -81,7 +81,6 @@ export default function JoinGame() {
             required
             disabled={joining}
             error={errors.nickname}
-            hint="2–20 characters."
           />
 
           <div className="field">

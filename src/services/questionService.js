@@ -36,22 +36,36 @@ export async function publishQuestion(gameId, questionId) {
     p_game_id: gameId,
     p_question_id: questionId,
   })
-  if (error) {
-    if (error.code === 'PGRST202' || error.message?.includes('Could not find the function')) {
-      const { error: updateError } = await getSupabase()
-        .from('games')
-        .update({
-          current_question_id: questionId,
-          question_started_at: new Date().toISOString(),
-        })
-        .eq('id', gameId)
-      if (updateError) throw updateError
-      return
-    }
-    throw error
-  }
+  if (error) throw error
 }
 
+export async function advanceGameIfDue(gameId) {
+  const { data, error } = await getSupabase().rpc('advance_game_if_due', {
+    p_game_id: gameId,
+  })
+  if (error) throw error
+  return Array.isArray(data) ? data[0] : data
+}
+
+// One deadline request, then one timeout based on database time. No polling.
+export function watchGameDeadline(gameId, onState, onError) {
+  let stopped = false
+  let timer
+  async function check() {
+    try {
+      const state = await advanceGameIfDue(gameId)
+      if (stopped || !state) return
+      onState(state)
+      if (state.status === 'active' && state.remaining_ms != null) {
+        timer = setTimeout(check, Math.max(100, Number(state.remaining_ms) + 100))
+      }
+    } catch (error) {
+      if (!stopped) onError(error)
+    }
+  }
+  check()
+  return () => { stopped = true; clearTimeout(timer) }
+}
 
 // Fetches the current live question for a player — never returns correct_option.
 export async function getLiveQuestion(gameCode) {

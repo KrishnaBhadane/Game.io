@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { getPlayerForGame } from '../services/gameService'
-import { getLiveQuestion } from '../services/questionService'
+import { watchGameDeadline, getLiveQuestion } from '../services/questionService'
 import {
   getLeaderboard,
   getMySubmission,
@@ -28,210 +28,167 @@ export default function PlayerGame() {
   const [wager, setWager] = useState(10)
   const [timeLeft, setTimeLeft] = useState(null)
   const [submitting, setSubmitting] = useState(false)
-  const [result, setResult] = useState(null) // { is_correct, correct_option, balance_change, new_balance, risk_label, wager }
+  const [result, setResult] = useState(null) // null, pending receipt, or revealed result
   const [leaderboard, setLeaderboard] = useState([])
   const [loading, setLoading] = useState(true)
   const [submitError, setSubmitError] = useState('')
   const [error, setError] = useState('')
   const channelRef = useRef(null)
   const gameRef = useRef(null) // stable ref for async callbacks
+  const refreshRef = useRef(() => {})
+  const [connectionError, setConnectionError] = useState('')
 
   const isTimeUp = timeLeft !== null && timeLeft <= 0
 
-  async function loadLeaderboard(gameId) {
-    try {
-      const rows = await getLeaderboard(gameId)
-      setLeaderboard(rows)
-    } catch {
-      // non-fatal
-    }
-  }
-
-  async function loadQuestion(gCode, qId) {
-    try {
-      const q = await getLiveQuestion(gCode)
-      setQuestion(q)
-      // Check if player already submitted for this question
-      if (qId) {
-        const sub = await getMySubmission(qId)
-        if (sub) {
-          setResult(sub)
-          setAnswer(sub.selected_option)
-        } else {
-          setResult(null)
-          setAnswer(null)
-          setRisk('No Risk')
-          setSubmitError('')
-        }
-      }
-    } catch {
-      setQuestion(null)
-    }
-  }
-
-  // Timer countdown hook
+  // Countdown is display-only; the deadline RPC uses database time.
   useEffect(() => {
-    if (!question || !question.question_started_at || result) {
-      setTimeLeft(null)
-      return
-    }
-
-    const limitSeconds = question.time_limit_seconds || 30
-    const startedMs = new Date(question.question_started_at).getTime()
-
-    function tick() {
-      const elapsedSeconds = Math.floor((Date.now() - startedMs) / 1000)
-      const remaining = Math.max(0, limitSeconds - elapsedSeconds)
-      setTimeLeft(remaining)
-    }
-
+    if (!question?.question_started_at) { setTimeLeft(null); return }
+    const deadline = Date.parse(question.question_started_at) + Number(question.time_limit_seconds) * 1000
+    const tick = () => setTimeLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)))
     tick()
-    const timerId = setInterval(tick, 1000)
-    return () => clearInterval(timerId)
-  }, [question, result])
+    const timer = setInterval(tick, 1000)
+    return () => clearInterval(timer)
+  }, [question])
 
-  // Adjust default wager when player balance loads/changes
   useEffect(() => {
-    if (player?.balance !== undefined) {
-      const bal = Number(player.balance)
-      const defaultWager = bal >= 200 ? 200 : bal >= 10 ? Math.min(bal, 50) : Math.max(1, bal)
-      setWager((prev) => (prev > bal || prev === 10 ? defaultWager : prev))
-    }
+    const balance = Number(player?.balance || 0)
+    setWager((previous) => Math.min(balance, previous || Math.min(balance, 200)))
   }, [player?.balance])
 
   useEffect(() => {
     let ignore = false
+    let stopClock = () => {}
+    let refreshTimer
+    let questionVersion = 0
+    let ownPlayerId
+    let refreshing = false
+    const supabase = getSupabase()
 
-    async function load() {
-      if (!gameCode) return
-      setLoading(true)
-      setError('')
+    async function refreshLeaderboard() {
       try {
-        const { game: gameData, player: playerData } =
-          await getPlayerForGame(gameCode)
-
-        if (!ignore) {
-          if (!gameData) {
-            setError('Game not found.')
-            setLoading(false)
-            return
-          }
-          if (!playerData) {
-            setError('You have not joined this game.')
-            setLoading(false)
-            return
-          }
-          setGame(gameData)
-          setPlayer(playerData)
-          gameRef.current = gameData
-
-          // Redirect based on current game status
-          if (gameData.status === 'waiting') {
-            navigate(`/lobby/${gameCode}`, { replace: true })
-            return
-          }
-          if (gameData.status === 'ended') {
-            navigate(`/results/${gameCode}`, { replace: true })
-            return
-          }
-
-          // Fetch live question + existing submission
-          if (gameData.current_question_id) {
-            const q = await getLiveQuestion(gameCode)
-            if (!ignore) {
-              setQuestion(q)
-              const sub = await getMySubmission(gameData.current_question_id)
-              if (!ignore && sub) {
-                setResult(sub)
-                setAnswer(sub.selected_option)
-              }
-            }
-          }
-
-          // Fetch leaderboard
-          await loadLeaderboard(gameData.id)
-
-          // Subscribe to game updates and player balance changes
-          if (channelRef.current) {
-            getSupabase().removeChannel(channelRef.current)
-            channelRef.current = null
-          }
-          const supabase = getSupabase()
-          const channel = supabase.channel(`game:${gameData.id}`)
-
-          // Game UPDATE — new question published
-          channel.on(
-            'postgres_changes',
-            {
-              event: 'UPDATE',
-              schema: 'public',
-              table: 'games',
-              filter: `id=eq.${gameData.id}`,
-            },
-            async (payload) => {
-              if (ignore) return
-              // Navigate to results when game ends
-              if (payload.new?.status === 'ended') {
-                navigate(`/results/${gameCode}`, { replace: true })
-                return
-              }
-              const newQId = payload.new?.current_question_id
-              const oldQId = payload.old?.current_question_id
-              if (newQId !== oldQId) {
-                setSubmitError('')
-                if (newQId) {
-                  await loadQuestion(gameCode, newQId)
-                } else {
-                  setQuestion(null)
-                  setResult(null)
-                  setAnswer(null)
-                }
-              }
-            },
-          )
-
-          // game_players UPDATE — balance/score changed (own or others → refresh leaderboard)
-          channel.on(
-            'postgres_changes',
-            {
-              event: 'UPDATE',
-              schema: 'public',
-              table: 'game_players',
-              filter: `game_id=eq.${gameData.id}`,
-            },
-            async (payload) => {
-              if (ignore) return
-              // If this is the current player's row, update balance
-              if (payload.new?.user_id === playerData.user_id) {
-                setPlayer((prev) => ({
-                  ...prev,
-                  balance: payload.new.balance,
-                  score: payload.new.score,
-                }))
-              }
-              // Refresh leaderboard for everyone
-              await loadLeaderboard(gameData.id)
-            },
-          )
-
-          channel.subscribe()
-          channelRef.current = channel
-        }
-      } catch (err) {
-        if (!ignore) setError(err.message || 'Failed to load game.')
-      } finally {
-        if (!ignore) setLoading(false)
-      }
+        const rows = await getLeaderboard(gameRef.current.id)
+        if (!ignore) setLeaderboard(rows)
+      } catch { if (!ignore) setConnectionError('Could not refresh leaderboard.') }
     }
 
-    load()
+    async function applyGame(next) {
+      if (ignore) return
+      const previous = gameRef.current
+      gameRef.current = next
+      setGame(next)
+      if (next.status !== 'active') {
+        stopClock()
+        navigate(`/${next.status === 'ended' ? 'results' : 'lobby'}/${gameCode}`, { replace: true })
+        return
+      }
+      if (previous?.current_question_id === next.current_question_id &&
+          previous?.question_started_at === next.question_started_at) {
+        if (previous?.question_revealed_at !== next.question_revealed_at && next.question_revealed_at) {
+          try {
+            const revealed = await getMySubmission(next.current_question_id)
+            if (ignore || gameRef.current?.current_question_id !== next.current_question_id) return
+            setResult(revealed)
+            setTimeLeft(0)
+            if (revealed?.status === 'revealed') setPlayer((prev) => ({ ...prev, balance: revealed.new_balance }))
+          } catch { if (!ignore) setConnectionError('Could not load result. Try again.') }
+        }
+        return
+      }
+      const version = ++questionVersion
+      setQuestion(null)
+      setResult(null)
+      setAnswer(null)
+      setTimeLeft(null)
+      setRisk('No Risk')
+      setSubmitError('')
+      try {
+        const q = await getLiveQuestion(gameCode)
+        const sub = q ? await getMySubmission(q.id) : null
+        if (ignore || version !== questionVersion) return
+        setQuestion(q)
+        setResult(sub)
+        setAnswer(sub?.selected_option || null)
+        if (sub?.status === 'revealed') setPlayer((prev) => ({ ...prev, balance: sub.new_balance }))
+      } catch { if (!ignore) setConnectionError('Could not load question. Try again.') }
+    }
 
+    function startClock() {
+      stopClock()
+      if (gameRef.current?.status !== 'active') return
+      stopClock = watchGameDeadline(gameRef.current.id, (state) => {
+        applyGame({ ...gameRef.current, ...state })
+      }, () => setConnectionError('Connection lost. Try again.'))
+    }
+
+    async function refresh() {
+      if (ignore || refreshing) return
+      refreshing = true
+      try {
+        const { game: next, player: me } = await getPlayerForGame(gameCode)
+        if (ignore) return
+        if (!next || !me) throw new Error('Game or player session not found.')
+        ownPlayerId = me.id
+        setPlayer(me)
+        // Force a fresh question/submission snapshot after reconnect.
+        gameRef.current = null
+        await applyGame(next)
+        if (ignore) return
+        setConnectionError('')
+        startClock()
+        await refreshLeaderboard()
+      } catch (err) { if (!ignore) setConnectionError(err.message || 'Could not reconnect.') }
+      finally { refreshing = false }
+    }
+    refreshRef.current = refresh
+    const resume = () => { if (document.visibilityState === 'visible') refresh() }
+    window.addEventListener('online', refresh)
+    document.addEventListener('visibilitychange', resume)
+
+    async function load() {
+      setLoading(true)
+      try {
+        const { game: next, player: me } = await getPlayerForGame(gameCode)
+        if (ignore) return
+        if (!next || !me) throw new Error('Game or player session not found.')
+        ownPlayerId = me.id
+        setPlayer(me)
+        gameRef.current = null
+        await applyGame(next)
+        if (ignore || next.status !== 'active') return
+        const channel = supabase.channel(`game:${next.id}`)
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${next.id}` }, ({ new: state }) => {
+            if (ignore) return
+            const changed = state.current_question_id !== gameRef.current?.current_question_id || state.question_started_at !== gameRef.current?.question_started_at
+            applyGame({ ...gameRef.current, ...state })
+            if (changed) startClock()
+          })
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'game_players', filter: `game_id=eq.${next.id}` }, ({ new: row }) => {
+            if (ignore) return
+            if (row.id === ownPlayerId) setPlayer((prev) => ({ ...prev, balance: row.balance, score: row.score }))
+            // Coalesce bursts of score updates into one leaderboard request.
+            clearTimeout(refreshTimer)
+            refreshTimer = setTimeout(refreshLeaderboard, 180)
+          })
+        channelRef.current = channel
+        channel.subscribe((status) => {
+          if (ignore) return
+          if (status === 'SUBSCRIBED') refresh()
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setConnectionError('Connection lost. Reconnecting…')
+        })
+      } catch (err) { if (!ignore) setError(err.message || 'Could not load game.') }
+      finally { if (!ignore) setLoading(false) }
+    }
+    load()
     return () => {
       ignore = true
-      if (channelRef.current) {
-        getSupabase().removeChannel(channelRef.current)
-        channelRef.current = null
-      }
+      questionVersion++
+      gameRef.current = null
+      stopClock()
+      clearTimeout(refreshTimer)
+      window.removeEventListener('online', refresh)
+      document.removeEventListener('visibilitychange', resume)
+      if (channelRef.current) supabase.removeChannel(channelRef.current)
+      channelRef.current = null
     }
   }, [gameCode, navigate])
 
@@ -246,16 +203,17 @@ export default function PlayerGame() {
         riskLabel: risk,
         wager: Number(wager),
       })
-      setResult(res)
-      // Update local balance immediately from result
-      setPlayer((prev) => ({ ...prev, balance: res.new_balance }))
-      // Refresh leaderboard
-      if (game) await loadLeaderboard(game.id)
+      if (gameRef.current?.current_question_id !== question.id) return
+      setResult((current) => current?.status === 'revealed' ? current : res)
     } catch (err) {
       setSubmitError(err.message || 'Submission failed.')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  function handleExit() {
+    if (window.confirm('Exit this game?')) navigate('/')
   }
 
   if (loading) {
@@ -293,6 +251,7 @@ export default function PlayerGame() {
   return (
     <section className="game-page">
       <h1 className="sr-only">Live game</h1>
+      {connectionError && <p role="alert" className="field-error">{connectionError} <Button variant="quiet" onClick={() => refreshRef.current()}>Retry</Button></p>}
       <div className="game-top">
         <div>
           <p className="eyebrow">{game.name}</p>
@@ -313,9 +272,10 @@ export default function PlayerGame() {
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span className="avatar" title={player.nickname}>
-            {getAvatarEmoji(player.avatar)}
+        <div className="player-status">
+          <span className="player-identity" title={player.nickname}>
+            <span className="avatar">{getAvatarEmoji(player.avatar)}</span>
+            <strong>{player.nickname}</strong>
           </span>
           <BalanceDisplay amount={Number(player.balance)} />
         </div>
@@ -326,17 +286,18 @@ export default function PlayerGame() {
         <Card className="question-card">
           <div className="waiting-status">
             <span className="status-dot" />
-            Waiting for host to publish a question…
+            Waiting for the next question…
           </div>
         </Card>
       ) : (
-        <Card className="question-card">
+        <Card key={question.id} className="question-card question-enter">
           <h2>{question.question_text}</h2>
           <div className="answers" role="group" aria-label="Choose your answer">
             {options.map(({ letter, text }) => (
               <AnswerOption
                 key={letter}
                 letter={letter}
+                disabled={Boolean(result) || submitting || isTimeUp}
                 selected={answer === letter}
                 onClick={() => {
                   if (result || submitting || isTimeUp) return
@@ -350,12 +311,14 @@ export default function PlayerGame() {
         </Card>
       )}
 
-      {/* Result card — shown after submission */}
-      {result && (
+      {result?.status === 'pending' && <p role="status">Answer submitted</p>}
+
+      {/* The server releases results only after the answer deadline. */}
+      {result?.status === 'revealed' && (
         <Card className="result-card">
           <div className="section-heading">
             <Badge tone={result.is_correct ? 'gold' : 'neutral'}>
-              {result.is_correct ? '✓ Correct' : '✗ Wrong'}
+              {!result.selected_option ? "Time's up" : result.is_correct ? '✓ Correct' : '✗ Wrong'}
             </Badge>
             <span className="fine-print">
               Correct answer: {result.correct_option}
@@ -363,17 +326,21 @@ export default function PlayerGame() {
           </div>
           <dl className="result-details">
             <div>
+              <dt>Your answer</dt>
+              <dd>{result.selected_option || 'Not answered'}</dd>
+            </div>
+            <div>
               <dt>Bet</dt>
-              <dd>₹{Number(result.wager || wager).toLocaleString('en-IN')}</dd>
+              <dd>₹{Number(result.wager ?? 0).toLocaleString('en-IN')}</dd>
             </div>
             <div>
               <dt>Risk</dt>
-              <dd>{result.risk_label ?? `${result.risk_multiplier}x`}</dd>
+              <dd>{result.risk_multiplier ? `${result.risk_multiplier}x` : '—'}</dd>
             </div>
             <div>
               <dt>Balance change</dt>
               <dd className={result.balance_change >= 0 ? '' : 'red-text'}>
-                {result.balance_change >= 0 ? '+' : ''}₹
+                {result.balance_change > 0 ? '+' : result.balance_change < 0 ? '-' : ''}₹
                 {Math.abs(Number(result.balance_change)).toLocaleString('en-IN')}
               </dd>
             </div>
@@ -395,13 +362,14 @@ export default function PlayerGame() {
               <span className="wager-amount">₹{Number(wager).toLocaleString('en-IN')}</span>
             </div>
             <input
+              aria-label="Wager"
               type="range"
               className="wager-slider"
               min={player.balance < 10 ? 1 : 10}
               max={Math.max(1, Number(player.balance || 0))}
               step={player.balance < 10 ? 1 : 10}
               value={wager}
-              disabled={isTimeUp || submitting}
+              disabled={isTimeUp || submitting || Number(player.balance) <= 0}
               onChange={(e) => setWager(Number(e.target.value))}
             />
             <div className="wager-labels">
@@ -418,14 +386,14 @@ export default function PlayerGame() {
               value={risk}
               onChange={setRisk}
               options={allowedRisks}
-              disabled={isTimeUp || submitting}
+              disabled={isTimeUp || submitting || Number(player.balance) <= 0}
             />
           </div>
 
           <div className="submit-area">
             <Button
               className="full-width"
-              disabled={!answer || submitting || isTimeUp}
+              disabled={!answer || submitting || isTimeUp || Number(player.balance) <= 0}
               onClick={handleSubmit}
             >
               {isTimeUp ? "Time's up" : submitting ? 'Submitting…' : 'Submit Answer'}
@@ -456,6 +424,7 @@ export default function PlayerGame() {
           </Card>
         </>
       )}
+      <Button variant="quiet" className="exit-game" onClick={handleExit}>Exit Game</Button>
     </section>
   )
 }

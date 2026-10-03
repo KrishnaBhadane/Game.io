@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
-import { getGamesByHost } from '../../services/gameService'
+import { deleteGame, getGamesByHost } from '../../services/gameService'
 import Button from '../../components/common/Button'
 import Card from '../../components/common/Card'
 import Badge from '../../components/common/Badge'
@@ -11,6 +11,7 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState('')
   const [signingOut, setSigningOut] = useState(false)
+  const [deletingId, setDeletingId] = useState('')
 
   useEffect(() => {
     let ignore = false
@@ -50,6 +51,20 @@ export default function AdminDashboard() {
     }
   }
 
+  async function handleDelete(game) {
+    if (!window.confirm(`Delete ${game.name}?`)) return
+    setDeletingId(game.id)
+    setFetchError('')
+    try {
+      await deleteGame(game.id)
+      setGames((current) => current.filter((item) => item.id !== game.id))
+    } catch (err) {
+      setFetchError(err.message || 'Could not delete game.')
+    } finally {
+      setDeletingId('')
+    }
+  }
+
   return (
     <section>
       <div className="page-heading">
@@ -79,10 +94,10 @@ export default function AdminDashboard() {
           {fetchError}
         </p>
       )}
-      {!loading && !fetchError && games.length === 0 && (
+      {!loading && games.length === 0 && (
         <p className="muted">No games created yet.</p>
       )}
-      {!loading && !fetchError && games.length > 0 && (
+      {!loading && games.length > 0 && (
         <div className="recent-grid">
           {games.map((game) => (
             <Card key={game.id}>
@@ -103,6 +118,15 @@ export default function AdminDashboard() {
               <Button variant="quiet" to={`/admin/game/${game.game_code}`}>
                 Control game →
               </Button>
+              {game.status !== 'active' && (
+                <Button
+                  variant="danger"
+                  onClick={() => handleDelete(game)}
+                  disabled={deletingId === game.id}
+                >
+                  {deletingId === game.id ? 'Deleting…' : 'Delete Game'}
+                </Button>
+              )}
             </Card>
           ))}
         </div>
@@ -110,4 +134,3 @@ export default function AdminDashboard() {
     </section>
   )
 }
-

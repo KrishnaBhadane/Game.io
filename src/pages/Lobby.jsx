@@ -59,6 +59,7 @@ export default function Lobby() {
           const list = await getPlayers(gameData.id)
           if (!ignore) setPlayers(list)
 
+          if (ignore) return
           // Subscribe: one channel for this game
           if (channelRef.current) {
             getSupabase().removeChannel(channelRef.current)
@@ -111,7 +112,19 @@ export default function Lobby() {
                 }
               },
             )
-            .subscribe()
+            .subscribe(async (status) => {
+              if (ignore || status !== 'SUBSCRIBED') return
+              try {
+                const { game: fresh, player: me } = await getPlayerForGame(gameCode)
+                if (ignore) return
+                if (!fresh || !me) throw new Error('Game or player session not found.')
+                if (fresh.status !== 'waiting') navigate(`/${fresh.status === 'ended' ? 'results' : 'game'}/${gameCode}`, { replace: true })
+                else {
+                  const crew = await getPlayers(fresh.id)
+                  if (!ignore) { setGame(fresh); setPlayer(me); setPlayers(crew) }
+                }
+              } catch (err) { if (!ignore) setError(err.message || 'Could not reconnect.') }
+            })
 
           channelRef.current = channel
         }
@@ -156,8 +169,12 @@ export default function Lobby() {
     )
   }
 
+  function handleExit() {
+    if (window.confirm('Exit this game?')) navigate('/')
+  }
+
   return (
-    <section className="medium">
+    <section className="medium lobby-page">
       <div className="page-heading">
         <div>
           <p className="eyebrow">{game.name}</p>
@@ -167,9 +184,9 @@ export default function Lobby() {
           {game.status === 'waiting' ? 'Waiting' : game.status}
         </Badge>
       </div>
-      <p className="page-description">
-        Welcome, {player.nickname} {getAvatarEmoji(player.avatar)}. Settle in. Your host takes it from here.
-      </p>
+      <div className="player-identity lobby-identity">
+        <span className="avatar">{getAvatarEmoji(player.avatar)}</span><strong>{player.nickname}</strong>
+      </div>
       <Card className="lobby-banner">
         <div>
           <p className="eyebrow">Game code</p>
@@ -194,7 +211,7 @@ export default function Lobby() {
           </li>
         ))}
       </ul>
+      <Button variant="quiet" className="exit-game" onClick={handleExit}>Exit Game</Button>
     </section>
   )
 }
-

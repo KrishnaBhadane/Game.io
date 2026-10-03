@@ -1,16 +1,20 @@
+import { memo } from 'react'
 import LeaderboardRow from './LeaderboardRow'
 
-export default function Leaderboard({ players, myNickname }) {
+function Leaderboard({ players }) {
   return (
     <ol className="leaderboard" aria-label="Leaderboard">
       {players.map((player, index) => (
         <LeaderboardRow
-          key={player.nickname ?? index}
+          key={index}
           player={player}
           rank={Number(player.rank ?? index + 1)}
-          isMe={myNickname ? player.nickname === myNickname : false}
+          isMe={player.isMe}
         />
       ))}
     </ol>
   )
 }
+
+// Local countdown ticks do not need to repaint the entire player list.
+export default memo(Leaderboard)

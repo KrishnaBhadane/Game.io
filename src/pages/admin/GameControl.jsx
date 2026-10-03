@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import { getGameByCode, getPlayers, startGame, endGame } from '../../services/gameService'
-import { publishQuestion } from '../../services/questionService'
+import { watchGameDeadline, publishQuestion } from '../../services/questionService'
 import { getLeaderboard } from '../../services/submissionService'
 import { getSupabase } from '../../lib/supabase'
 import Button from '../../components/common/Button'
@@ -23,6 +23,10 @@ export default function GameControl() {
   const [leaderboard, setLeaderboard] = useState([])
   const [submissionCount, setSubmissionCount] = useState(0)
   const channelRef = useRef(null)
+  const [reconnect, setReconnect] = useState(0)
+  const [connectionError, setConnectionError] = useState('')
+  const gameRef = useRef(null)
+  gameRef.current = game
 
   async function loadLeaderboard(gameId) {
     try {
@@ -54,13 +58,15 @@ export default function GameControl() {
 
   useEffect(() => {
     let ignore = false
+    let leaderboardTimer
+    let reconnecting = false
 
     async function loadGame() {
       if (!gameCode) return
       setLoading(true)
       setError('')
       try {
-        const data = await getGameByCode(gameCode)
+        let data = await getGameByCode(gameCode)
         if (!ignore) {
           if (!data) {
             setError('Game not found.')
@@ -79,6 +85,7 @@ export default function GameControl() {
             }
           }
 
+          if (ignore) return
           // Clean up any existing channel before subscribing
           if (channelRef.current) {
             getSupabase().removeChannel(channelRef.current)
@@ -99,6 +106,9 @@ export default function GameControl() {
                 filter: `game_id=eq.${data.id}`,
               },
               (payload) => {
+                if (ignore) return
+                clearTimeout(leaderboardTimer)
+                leaderboardTimer = setTimeout(() => loadLeaderboard(data.id), 180)
                 if (payload.eventType === 'INSERT') {
                   setPlayers((prev) => {
                     if (prev.some((p) => p.id === payload.new.id)) return prev
@@ -126,13 +136,8 @@ export default function GameControl() {
                 filter: `id=eq.${data.id}`,
               },
               (payload) => {
-                setGame((prev) => ({
-                  ...prev,
-                  ...(payload.new?.status && { status: payload.new.status }),
-                  ...(payload.new?.current_question_id !== undefined && {
-                    current_question_id: payload.new.current_question_id,
-                  }),
-                }))
+                if (ignore) return
+                setGame((prev) => ({ ...prev, ...payload.new }))
                 // Update submission count when question changes
                 if (
                   payload.new?.current_question_id !==
@@ -150,13 +155,30 @@ export default function GameControl() {
                 table: 'submissions',
                 filter: `game_id=eq.${data.id}`,
               },
-              async () => {
+              (payload) => {
                 if (ignore) return
-                setSubmissionCount((n) => n + 1)
-                await loadLeaderboard(data.id)
+                if (payload.new.question_id === gameRef.current?.current_question_id) setSubmissionCount((n) => n + 1)
               },
             )
-            .subscribe()
+            .subscribe(async (status) => {
+              if (ignore) return
+              if (status === 'SUBSCRIBED' && !reconnecting) {
+                reconnecting = true
+                try {
+                  const [fresh, crew] = await Promise.all([getGameByCode(gameCode), getPlayers(data.id)])
+                  if (ignore) return
+                  if (!fresh) throw new Error('Game not found.')
+                  setGame(fresh)
+                  setPlayers(crew)
+                  setReconnect((n) => n + 1)
+                  setConnectionError('')
+                  await Promise.all([loadLeaderboard(data.id), loadSubmissionCount(data.id, fresh.current_question_id)])
+                } catch { if (!ignore) setConnectionError('Could not reconnect. Refresh to retry.') }
+                finally { reconnecting = false }
+              } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                setConnectionError('Connection lost. Reconnecting…')
+              }
+            })
 
           channelRef.current = channel
         }
@@ -172,6 +194,7 @@ export default function GameControl() {
     loadGame()
     return () => {
       ignore = true
+      clearTimeout(leaderboardTimer)
       if (channelRef.current) {
         getSupabase().removeChannel(channelRef.current)
         channelRef.current = null
@@ -179,12 +202,20 @@ export default function GameControl() {
     }
   }, [gameCode])
 
+  useEffect(() => {
+    if (!game?.id || game.status !== 'active') return
+    return watchGameDeadline(game.id, (state) => {
+      setGame((prev) => ({ ...prev, ...state }))
+    }, () => setConnectionError('Could not advance. Refresh to retry.'))
+  }, [game?.id, game?.status, game?.current_question_id, game?.question_started_at, reconnect])
+
   async function handleStart() {
     if (!game || starting) return
+    setError('')
     setStarting(true)
     try {
-      await startGame(game.id)
-      setGame((prev) => ({ ...prev, status: 'active' }))
+      const startedGame = await startGame(game.id)
+      setGame((prev) => ({ ...prev, ...startedGame }))
     } catch (err) {
       setError(err.message || 'Failed to start game.')
     } finally {
@@ -194,10 +225,11 @@ export default function GameControl() {
 
   async function handlePublish(questionId) {
     if (!game || game.status !== 'active' || publishing) return
+    setError('')
     setPublishing(true)
     try {
       await publishQuestion(game.id, questionId)
-      setGame((prev) => ({ ...prev, current_question_id: questionId }))
+      setGame(await getGameByCode(gameCode))
       await loadSubmissionCount(game.id, questionId)
     } catch (err) {
       setError(err.message || 'Failed to publish question.')
@@ -229,7 +261,7 @@ export default function GameControl() {
     )
   }
 
-  if (error || !game) {
+  if (!game) {
     return (
       <section>
         <Button to="/admin" variant="quiet">
@@ -243,7 +275,8 @@ export default function GameControl() {
   }
 
   return (
-    <section>
+    <section className="control-page">
+      {(error || connectionError) && <p role="alert" className="field-error">{error || connectionError}</p>}
       <Button to="/admin" variant="quiet">
         ← Dashboard
       </Button>
@@ -264,7 +297,7 @@ export default function GameControl() {
         <Card>
           <p className="eyebrow">Players joined</p>
           <p className="stat-number">
-            {players.length}<span> / 200 target</span>
+            {players.length}
           </p>
         </Card>
         <Card>
@@ -296,6 +329,7 @@ export default function GameControl() {
         <Card>
           <QuestionBank
             gameId={game.id}
+            refreshKey={reconnect}
             currentQuestionId={game.current_question_id}
             onPublish={game.status === 'active' ? handlePublish : undefined}
           />

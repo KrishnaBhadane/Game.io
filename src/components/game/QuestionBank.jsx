@@ -18,7 +18,7 @@ const emptyQuestion = {
   time_limit_seconds: 30,
 }
 
-export default function QuestionBank({ gameId, currentQuestionId, onPublish }) {
+export default function QuestionBank({ gameId, currentQuestionId, onPublish, refreshKey }) {
   const [questions, setQuestions] = useState([])
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -39,7 +39,7 @@ export default function QuestionBank({ gameId, currentQuestionId, onPublish }) {
 
   useEffect(() => {
     loadQuestions()
-  }, [gameId])
+  }, [gameId, refreshKey])
 
   function startAdd() {
     setError('')

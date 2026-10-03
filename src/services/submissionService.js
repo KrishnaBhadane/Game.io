@@ -8,7 +8,7 @@ export const RISK_MULTIPLIERS = {
   '5x': 5,
 }
 
-// Submit answer via secure server-side RPC. Returns result object.
+// Submit returns a pending receipt, never correctness or payout information.
 export async function submitAnswer({ questionId, selectedOption, riskLabel, wager = 10 }) {
   const { data, error } = await getSupabase().rpc('submit_answer', {
     p_question_id: questionId,
@@ -17,10 +17,10 @@ export async function submitAnswer({ questionId, selectedOption, riskLabel, wage
     p_wager: Number(wager),
   })
   if (error) throw error
-  return data // { is_correct, correct_option, selected_option, risk_label, wager, balance_change, new_balance }
+  return data
 }
 
-// Fetch a player's existing submission for a question (refresh-safe).
+// Restores pending submission or the result after the server deadline.
 export async function getMySubmission(questionId) {
   const { data, error } = await getSupabase().rpc('get_my_submission', {
     p_question_id: questionId,
@@ -29,41 +29,27 @@ export async function getMySubmission(questionId) {
   return data // null if not submitted
 }
 
-// Fetch leaderboard for a game. Returns [{ nickname, avatar, balance, score, rank }].
+// Fetch leaderboard for a game. DB RPC already orders by rank,joined_at with shared ranks.
 export async function getLeaderboard(gameId) {
   const { data, error } = await getSupabase().rpc('get_leaderboard', {
     p_game_id: gameId,
   })
   if (error) throw error
 
-  // Sort: 1. Balance desc, 2. Score desc
-  const sorted = [...(data || [])].sort((a, b) => {
-    if (Number(b.balance) !== Number(a.balance)) {
-      return Number(b.balance) - Number(a.balance)
-    }
-    return (b.score || 0) - (a.score || 0)
-  })
-
-  // Assign standard competition ranking (1224) preserving shared ranks for ties
-  let currentRank = 1
-  return sorted.map((row, idx) => {
-    if (idx > 0) {
-      const prev = sorted[idx - 1]
-      if (
-        Number(row.balance) !== Number(prev.balance) ||
-        (row.score || 0) !== (prev.score || 0)
-      ) {
-        currentRank = idx + 1
-      }
-    }
-    return {
-      name: row.nickname,
-      nickname: row.nickname,
-      avatar: row.avatar || 'straw-hat',
-      balance: Number(row.balance),
-      score: row.score ?? 0,
-      rank: currentRank,
-    }
-  })
+  return (data || []).map((row) => ({
+    nickname: row.nickname,
+    isMe: row.is_me === true,
+    avatar: row.avatar || 'straw-hat',
+    balance: Number(row.balance),
+    score: row.score ?? 0,
+    rank: Number(row.rank),
+  }))
 }
 
+export async function getMyGameSummary(gameId) {
+  const { data, error } = await getSupabase().rpc('get_my_game_summary', {
+    p_game_id: gameId,
+  })
+  if (error) throw error
+  return data || []
+}

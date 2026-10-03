@@ -50,7 +50,9 @@ export async function createGame({
 export async function getGamesByHost(hostId) {
   const { data, error } = await getSupabase()
     .from('games')
-    .select('id, host_id, name, game_code, starting_balance, allowed_multipliers, question_timer, status, created_at')
+    .select(
+      'id, host_id, name, game_code, starting_balance, allowed_multipliers, question_timer, status, created_at',
+    )
     .eq('host_id', hostId)
     .order('created_at', { ascending: false })
 
@@ -146,38 +148,30 @@ export async function joinGame({ gameCode, nickname, avatar }) {
     throw new Error('This game has already started or ended.')
   }
 
-  // 5. Insert new player row
-  const { data: newPlayer, error: insertError } = await supabase
-    .from('game_players')
-    .insert({
-      game_id: game.id,
-      user_id: user.id,
-      nickname: trimmedNickname,
-      avatar: avatar || 'straw-hat',
-      balance: Number(game.starting_balance),
-      score: 0,
-    })
-    .select()
-    .single()
+  // 5. The server sets the game, user, balance, and score.
+  const { data, error } = await supabase.rpc('join_game_player', {
+    p_game_code: normalizedCode,
+    p_nickname: trimmedNickname,
+    p_avatar: avatar,
+  })
 
-  if (insertError) {
-    // Unique constraint collision on (game_id, user_id)
-    if (insertError.code === '23505') {
-      const { data: recheckPlayer } = await supabase
-        .from('game_players')
-        .select('*')
-        .eq('game_id', game.id)
-        .eq('user_id', user.id)
-        .maybeSingle()
+  if (error) throw error
 
-      if (recheckPlayer) {
-        return { game, player: recheckPlayer, isRejoin: true }
-      }
-    }
-    throw insertError
+  const joined = Array.isArray(data) ? data[0] : data
+  if (!joined) throw new Error('Unable to join game.')
+
+  return {
+    game: { ...game, id: joined.game_id, status: joined.status },
+    player: {
+      id: joined.player_id,
+      game_id: joined.game_id,
+      nickname: joined.nickname,
+      avatar: joined.avatar,
+      balance: joined.balance,
+      score: joined.score,
+    },
+    isRejoin: false,
   }
-
-  return { game, player: newPlayer, isRejoin: false }
 }
 
 export async function getPlayers(gameId) {
@@ -192,30 +186,24 @@ export async function getPlayers(gameId) {
 }
 
 export async function startGame(gameId) {
-  const { error } = await getSupabase()
-    .from('games')
-    .update({ status: 'active' })
-    .eq('id', gameId)
-
+  const { data, error } = await getSupabase().rpc('start_game', {
+    p_game_id: gameId,
+  })
   if (error) throw error
+  return Array.isArray(data) ? data[0] : data
 }
 
 export async function endGame(gameId) {
   const { error } = await getSupabase().rpc('end_game', { p_game_id: gameId })
-  if (error) {
-    if (error.code === 'PGRST202' || error.message?.includes('Could not find the function')) {
-      const { error: updateError } = await getSupabase()
-        .from('games')
-        .update({ status: 'ended', ended_at: new Date().toISOString() })
-        .eq('id', gameId)
-      if (updateError) throw updateError
-      return
-    }
-    throw error
-  }
+  if (error) throw error
 }
 
-
+export async function deleteGame(gameId) {
+  const { error } = await getSupabase().rpc('delete_game', {
+    p_game_id: gameId,
+  })
+  if (error) throw error
+}
 
 export async function getPlayerForGame(gameCode) {
   const supabase = getSupabase()
@@ -236,6 +224,6 @@ export async function getPlayerForGame(gameCode) {
     .maybeSingle()
 
   if (error) throw error
-  return { game, player }
+  // The public join lookup intentionally omits live state and game settings.
+  return { game: player ? await getGameByCode(gameCode) : game, player }
 }
-

@@ -521,6 +521,24 @@ h3 {
 .game-top .balance {
   text-align: right;
 }
+.player-status {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.player-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+}
+.player-identity strong {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .question-card h2 {
   font-size: clamp(22px, 3vw, 29px);
   line-height: 1.3;
@@ -642,6 +660,45 @@ h3 {
 .result-details dd {
   margin: 0;
   font-weight: 650;
+}
+.money-summary {
+  margin-top: 30px;
+}
+.summary-totals {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px 24px;
+  margin-bottom: 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.summary-totals strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 16px;
+}
+.summary-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.summary-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.summary-list p,
+.summary-list span {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+.summary-list li > div:last-child {
+  text-align: right;
+  flex: 0 0 auto;
 }
 .leaderboard-card {
   padding-block: 8px;
@@ -922,6 +979,11 @@ h3 {
     gap: 12px;
     margin-bottom: 20px;
   }
+  .player-status {
+    gap: 10px;
+  }
+  .game-top { flex-wrap: wrap; }
+  .player-status { width: 100%; justify-content: space-between; }
   .game-top .eyebrow {
     font-size: 9px;
     letter-spacing: 0.1em;
@@ -974,6 +1036,9 @@ h3 {
   .result-details div {
     font-size: 14px;
   }
+  .summary-list li {
+    gap: 12px;
+  }
   .leaderboard-card {
     padding-block: 4px;
   }
@@ -1011,6 +1076,7 @@ h3 {
   *::before,
   *::after {
     transition: none !important;
+    animation: none !important;
     scroll-behavior: auto !important;
   }
 }
@@ -1018,4 +1084,65 @@ h3 {
 /* Preserve form spacing after removing introductory copy. */
 .narrow > h1 + .card {
   margin-top: 28px;
+}
+
+/* Carry the hero's ink, burgundy and warm paper into the game screens. */
+.app:has(.join-page, .lobby-page, .game-page, .results-page, .control-page) {
+  min-height: 100svh;
+  background: #fcfaf7;
+}
+.app:has(.join-page, .lobby-page, .game-page, .results-page, .control-page) .site-header {
+  border-bottom: 0;
+}
+.join-page > .card, .game-page > .question-card,
+.control-layout > .card, .control-summary > .card {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  padding-inline: 0;
+}
+.join-page h1, .lobby-page h1, .results-page h1, .control-page h1 {
+  color: #4a1222;
+  font-weight: 800;
+}
+.lobby-banner { border: 0; background: #f3eee6; }
+.lobby-identity { margin: 24px 0; }
+.lobby-page > .balance { margin-top: 24px; }
+.player-identity strong { max-width: 220px; overflow-wrap: anywhere; white-space: normal; }
+.player-status .avatar { width: 36px; height: 36px; font-size: 20px; background: transparent; }
+.game-top { align-items: flex-start; }
+.game-top > div { min-width: 0; }
+.game-page > .result-card { display: grid; gap: 18px; margin-top: 20px; }
+.result-details { border: 0; padding: 0; }
+.results-page > .result-card { flex-wrap: wrap; gap: 20px; border: 0; }
+.results-page > .result-card > div:first-child { flex-basis: 100%; }
+.summary-totals strong { color: #0a0a0a; }
+.summary-totals strong.red-text { color: #641b2e; }
+.summary-list li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.summary-list li > div { min-width: 0; overflow-wrap: anywhere; }
+.summary-list span { display: block; font-size: 12px; }
+.summary-list li > div:last-child > strong:first-child { text-transform: capitalize; }
+.exit-game { margin-top: 32px; min-height: 48px; }
+.wager-slider { height: 32px; }
+.answer:disabled { cursor: default; }
+.leaderboard-name { min-width: 0; overflow-wrap: anywhere; }
+.question-enter { animation: game-enter 180ms ease-out both; }
+.balance strong { animation: game-enter 180ms ease-out both; }
+.timer-warning { animation: timer-urgent 300ms ease-out both; }
+@keyframes game-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes timer-urgent {
+  from { transform: scale(1.05); }
+  to { transform: scale(1); }
+}
+@media (max-width: 600px) {
+  .summary-list li { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .summary-list li > div:last-child { text-align: left; }
+  .game-top .eyebrow { font-size: 11px; }
+  .game-page > .question-card { padding-block: 4px 12px; }
+  .results-page > .result-card { align-items: flex-start; text-align: left; }
+  .results-page > .result-card > div:first-child { flex-basis: auto; }
+  .submit-area { background: #fcfaf7; }
 }

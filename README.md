@@ -1,75 +1,98 @@
 # Game.io
 
-A live multiplayer quiz for a target of approximately 200 concurrent players. Admins host and control the game; players join with a code, nickname, and avatar. All currency is virtual.
+A live multiplayer quiz game for approximately 200 concurrent players. Admins host and control the game; players join with a code, nickname, and avatar. All currency is virtual.
 
-## Current scope: Step 13.5 complete
+## Stack
 
-All features are implemented and connected to Supabase. The game is fully playable end-to-end:
+- **Frontend**: React 19, React Router 8, Vite 8, Tailwind CSS v4
+- **Backend**: Supabase (PostgreSQL + Realtime + Auth)
+- **Language**: JavaScript (ES modules)
 
-- Admin authentication (email/password)
+## Features
+
+- Admin authentication (email/password, no signup UI)
 - Game creation with configurable starting balance and allowed risk multipliers
-- Player join with avatar selection and anonymous Supabase Auth
-- Real-time lobby, live question delivery, per-question countdown timer
-- Player wager (slider) + risk multiplier selection before submit
-- Server-side scoring and balance updates (SECURITY DEFINER RPCs)
+- Player join with avatar selection and anonymous Supabase Auth (no login screen)
+- Real-time lobby with live player list
+- Per-question countdown timer (set per question by admin)
+- Player wager slider + risk multiplier before submit
+- Server-side scoring via SECURITY DEFINER RPCs (wager × multiplier)
 - Real-time leaderboard during play
 - Host-controlled game end → final leaderboard with winner determination
-- Reconnect safety: pages redirect based on live game status on load
+- Reconnect safety: all pages redirect to the correct stage based on live game status
 
-## Run locally
+## Setup
 
-Use Node 24 LTS (`nvm use` if you use nvm).
+### 1. Clone and install
 
 ```sh
+git clone https://github.com/KrishnaBhadane/Game.io.git
+cd Game.io
 npm ci
+```
+
+### 2. Configure environment
+
+```sh
+cp .env.example .env
+```
+
+Edit `.env`:
+
+```
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=your-public-anon-key
+```
+
+> Use only the **public anon/publishable key**. Never put a service-role key or database password here.
+
+### 3. Run Supabase migrations
+
+Apply all migrations in order in the Supabase SQL editor or via Supabase CLI:
+
+| # | File | Description |
+|---|------|-------------|
+| 1 | `202610030001_core_tables.sql` | Core schema, RLS, indexes |
+| 2 | `202610030002_step5_games_schema_and_policies.sql` | Game config columns + host write policies |
+| 3 | `202610030003_step6_player_join_rpc_and_rls.sql` | Player join RPC + RLS |
+| 4 | `202610030004_step7_questions_crud_rls.sql` | Question CRUD + host policies |
+| 5 | `202610030005_step8_realtime_and_start_game.sql` | Realtime publication, start game |
+| 6 | `202610030006_step9_live_question.sql` | Live question RPC |
+| 7 | `202610030007_step10_12_submission_scoring_leaderboard.sql` | submit_answer, get_my_submission, get_leaderboard RPCs |
+| 8 | `202610030008_step13_end_game.sql` | end_game, publish_question RPCs, game-end guards |
+| 9 | `202610030009_step13_5_timer_wager_avatar.sql` | Per-question timer, wager scoring, avatar column |
+| 10 | `202610030010_step14_performance_indexes.sql` | Composite indexes for hot gameplay paths |
+
+### 4. Create an admin user
+
+In Supabase Dashboard → Authentication → Users → Add user (email + password, confirm email). Disable public signups in Auth settings.
+
+### 5. Run locally
+
+```sh
 npm run dev
 ```
 
-Open the local URL printed by Vite. Supabase credentials are required for full functionality.
+### 6. Production build
 
 ```sh
 npm run build
-npm run preview
 ```
 
-The build produces minified assets in `dist/`. Preview serves that production build locally.
+Output goes to `dist/`. Serve with any static host. For SPA routing (Vercel/Netlify), configure a fallback to `index.html`.
 
-## Environment and Supabase
+## Game flow
 
-1. Copy `.env.example` to `.env`.
-2. Set `VITE_SUPABASE_URL` to the project's URL.
-3. Set `VITE_SUPABASE_PUBLISHABLE_KEY` to its public publishable key.
-4. Restart Vite after environment changes.
+**Admin:**
+Login → Create Game → Add questions (with timers) → Start Game → Publish questions → Watch submissions → End Game
 
-Every `VITE_` variable is exposed to the browser. Never put a Supabase secret or service-role key there. Database access is enforced with RLS and SECURITY DEFINER RPCs.
-
-## Project structure
-
-```text
-src/
-  components/
-    common/             Button, Input, Card, Badge
-    game/               AnswerOption, RiskSelector, BalanceDisplay, QuestionBank
-    leaderboard/        Leaderboard, LeaderboardRow
-  context/              AdminAuth (auth listener, useAuth hook)
-  data/
-    avatars.js          Avatar list and emoji lookup
-    constants.js        Shared constants (RISK_OPTIONS)
-  hooks/useAuth.js      Auth context hook
-  lib/supabase.js       Supabase client factory
-  pages/                Home, JoinGame, Lobby, PlayerGame, Results, NotFound
-    admin/              AdminLogin, AdminDashboard, CreateGame, GameControl
-  styles/index.css      Design tokens, shared styles, responsive layouts
-  App.jsx               Shared shell, routes, lazy admin imports
-  main.jsx              React entry and browser router
-supabase/
-  migrations/           All SQL migrations (core tables through Step 13.5)
-```
+**Player:**
+Enter game code → Choose nickname + avatar → Lobby → Question live → Set wager + risk → Submit → See result → Leaderboard → Next question → Final results
 
 ## Routes
 
 | Route | Page |
-| --- | --- |
+|-------|------|
 | `/` | Home |
 | `/join` | Join Game |
 | `/lobby/:gameCode` | Player Lobby |
@@ -79,60 +102,26 @@ supabase/
 | `/admin` | Admin Dashboard |
 | `/admin/create` | Create Game |
 | `/admin/game/:gameCode` | Game Control |
-| `*` | 404 |
 
-Admin routes require a non-anonymous email session. All server-side RPCs independently verify host ownership.
+## Security
 
-## Game architecture
+All scoring, balance changes, and game state transitions happen via SECURITY DEFINER RPCs — the browser never writes balance or score directly. Correct answers are never exposed to players. Players cannot submit twice, submit after timer expiry, or join active/ended games.
 
-Pages compose UI; components render props and emit user actions. Services own all Supabase calls.
+## Project structure
 
-- **Admins** authenticate with email/password. Anonymous sessions must never be treated as admin.
-- **Players** receive an anonymous Supabase Auth session on join (no sign-up screen).
-- **Scoring** is entirely server-side via `submit_answer` RPC (SECURITY DEFINER). The browser submits intent (answer, risk, wager); the server verifies membership, active question, timer expiry, allowed risk, and duplicate submissions before updating balance.
-- **Winner** = highest balance → if tied, higher score → shared rank if still tied.
-
-### Realtime contract
-
-- One channel per active game per connected client, named `game:<game_id>` (players) or `admin:<game_id>` (host).
-- Fetch an authorized initial snapshot; use realtime updates afterward.
-- On game end (`status = 'ended'`), all players and the lobby are pushed to `/results/:gameCode`.
-- Subscribe once; remove the channel on unmount.
-
-### Security
-
-- All write operations use SECURITY DEFINER RPCs with server-side validation.
-- `submit_answer` enforces: active game, current question, timer expiry, allowed risk, wager within balance, no duplicate.
-- `publish_question` enforces host ownership and active game status.
-- `end_game` enforces host ownership.
-- `join_game_player` enforces waiting status and validates nickname/avatar.
-- Correct answers are never exposed to players (no `correct_option` in player-facing queries).
-
-## Setup references
-
-- [Vite guide](https://vite.dev/guide/)
-- [Tailwind Vite integration](https://tailwindcss.com/docs/installation/using-vite)
-- [React Router declarative setup](https://reactrouter.com/start/declarative/installation)
-- [Supabase client initialization](https://supabase.com/docs/reference/javascript/initializing)
-
-## Hero artwork
-
-The homepage uses a burgundy stage, cream typography, and a transparent Luffy cutout. `public/favicon.svg` is the custom pirate mark. `src/assets/luffy-hero.webp` is the optimized 900px transparent hero (~170 KB).
-
-## Build sequence
-
-1. Architecture and base setup — ✅
-2. Global design system, expanded routing, reusable UI — ✅
-3. Supabase environment and core SQL — ✅
-4. Admin authentication — ✅
-5. Admin dashboard and game creation — ✅
-6. Game code and anonymous player joining — ✅
-7. Realtime lobby and player management — ✅
-8. Admin question controls — ✅
-9. Realtime question delivery — ✅
-10. Answer and risk submission — ✅
-11. Secure scoring and balance calculations — ✅
-12. Results and realtime leaderboard — ✅
-13. Game ending, final results, reconnect/error handling — ✅
-13.5. Per-question timer, player wager, avatar selection — ✅
-14. Performance, security/RLS review, 200-player load tests, deployment — pending
+```
+src/
+  components/common/      Button, Input, Card, Badge
+  components/game/        AnswerOption, RiskSelector, BalanceDisplay, QuestionBank
+  components/leaderboard/ Leaderboard, LeaderboardRow
+  context/AdminAuth.jsx   Admin auth listener + useAuth hook
+  data/avatars.js         Avatar list and emoji lookup
+  data/constants.js       Shared constants (RISK_OPTIONS)
+  hooks/useAuth.js        Auth context hook
+  lib/supabase.js         Supabase client factory
+  pages/                  Home, JoinGame, Lobby, PlayerGame, Results, NotFound
+  pages/admin/            AdminLogin, AdminDashboard, CreateGame, GameControl
+  services/               gameService, questionService, submissionService
+  styles/index.css        Design tokens and shared styles
+supabase/migrations/      All SQL migrations (apply in order)
+```

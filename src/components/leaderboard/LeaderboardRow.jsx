@@ -9,7 +9,7 @@ export default function LeaderboardRow({ player, rank, isMe }) {
       </span>
       <span className="leaderboard-name">
         <span aria-hidden="true" style={{ marginRight: '6px' }}>{emoji}</span>
-        {player.name}{isMe ? ' ★' : ''}
+        {player.nickname ?? player.name}{isMe ? ' ★' : ''}
       </span>
       <strong>₹{player.balance.toLocaleString('en-IN')}</strong>
     </li>

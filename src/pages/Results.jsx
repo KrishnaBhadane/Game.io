@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { getPlayerForGame } from '../services/gameService'
-import { getLeaderboard } from '../services/submissionService'
+import { getLeaderboard, getMyGameSummary } from '../services/submissionService'
 import Card from '../components/common/Card'
 import Badge from '../components/common/Badge'
 import Button from '../components/common/Button'
@@ -15,6 +15,7 @@ export default function Results() {
   const [game, setGame] = useState(null)
   const [player, setPlayer] = useState(null)
   const [leaderboard, setLeaderboard] = useState([])
+  const [summary, setSummary] = useState([])
   const [myRank, setMyRank] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -31,7 +32,7 @@ export default function Results() {
           await getPlayerForGame(gameCode)
 
         if (!ignore) {
-          if (!gameData) {
+          if (!gameData || !playerData) {
             setError('Game not found.')
             setLoading(false)
             return
@@ -50,21 +51,15 @@ export default function Results() {
           setGame(gameData)
           setPlayer(playerData)
 
-          const rows = await getLeaderboard(gameData.id)
+          const [rows, personalSummary] = await Promise.all([
+            getLeaderboard(gameData.id),
+            playerData ? getMyGameSummary(gameData.id) : Promise.resolve([]),
+          ])
           if (!ignore) {
             setLeaderboard(rows)
-            if (playerData) {
-              const mine = rows.find((r) => r.nickname === playerData.nickname)
-              if (mine) {
-                setMyRank(mine.rank)
-                setPlayer((prev) => ({
-                  ...prev,
-                  balance: mine.balance,
-                  score: mine.score,
-                  avatar: mine.avatar || prev.avatar,
-                }))
-              }
-            }
+            setSummary(personalSummary)
+            const mine = rows.find((r) => r.isMe)
+            setMyRank(mine?.rank ?? null)
           }
         }
       } catch (err) {
@@ -96,7 +91,15 @@ export default function Results() {
   }
 
   const isWinner = myRank === 1
-  const topRank = leaderboard[0]?.rank ?? null
+  const totals = summary.reduce(
+    (current, item) => ({
+      correct: current.correct + (item.result === 'correct' ? 1 : 0),
+      gained: current.gained + Number(item.gained || 0),
+      deducted: current.deducted + Number(item.deducted || 0),
+      net: current.net + Number(item.balance_change || 0),
+    }),
+    { correct: 0, gained: 0, deducted: 0, net: 0 },
+  )
 
   return (
     <section className="medium results-page">
@@ -136,6 +139,35 @@ export default function Results() {
             )}
           </dl>
         </Card>
+      )}
+
+      {summary.length > 0 && (
+        <section className="money-summary" aria-label="Your game summary">
+          <div className="section-heading"><h2>Your game</h2></div>
+          <div className="summary-totals">
+            <span>Correct <strong>{totals.correct}</strong></span>
+            <span>Gained <strong>+₹{totals.gained.toLocaleString('en-IN')}</strong></span>
+            <span>Deducted <strong>-₹{totals.deducted.toLocaleString('en-IN')}</strong></span>
+            <span>Net <strong className={totals.net < 0 ? 'red-text' : ''}>{totals.net >= 0 ? '+' : '-'}₹{Math.abs(totals.net).toLocaleString('en-IN')}</strong></span>
+          </div>
+          <ol className="summary-list">
+            {summary.map((item) => (
+              <li key={item.question_number}>
+                <div>
+                  <strong>Q{item.question_number}</strong>
+                  <p>{item.question_text}</p>
+                  {item.selected_option && <p className="summary-answer">Your answer: {item.selected_option} · {item.selected_answer}</p>}
+                </div>
+                <div className={item.result === 'wrong' ? 'red-text' : ''}>
+                  <strong>{item.result}</strong>
+                  <span>Bet ₹{Number(item.wager).toLocaleString('en-IN')}{item.risk_multiplier != null ? ` · ${Number(item.risk_multiplier)}x` : ''}</span>
+                  <span>Gained ₹{Number(item.gained).toLocaleString('en-IN')} · Deducted ₹{Number(item.deducted).toLocaleString('en-IN')}</span>
+                  <strong>{Number(item.balance_change) > 0 ? '+' : Number(item.balance_change) < 0 ? '-' : ''}₹{Math.abs(Number(item.balance_change)).toLocaleString('en-IN')}</strong>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
       )}
 
       {leaderboard.length > 0 && (
