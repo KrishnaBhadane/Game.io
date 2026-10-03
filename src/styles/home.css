@@ -1,0 +1,171 @@
+.app-home {
+  min-height: 100svh;
+  background: #4a1222;
+  color: #f7eddc;
+}
+.app-home .site-header {
+  border: 0;
+}
+.app-home .brand .red-text {
+  color: #d4ad5c;
+}
+.app-home .site-header nav a {
+  color: #f7eddc;
+  opacity: 0.8;
+}
+.app-home .site-header nav a:hover {
+  opacity: 1;
+}
+.app-home :focus-visible {
+  outline-color: #d4ad5c;
+}
+.app-home .page-shell {
+  max-width: 1440px;
+  padding: 0 20px 32px;
+  min-height: 0;
+}
+.bounty-hero {
+  text-align: center;
+}
+.hero-stage {
+  position: relative;
+  height: clamp(380px, 65svh, 640px);
+  isolation: isolate;
+}
+.hero-title {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  width: 100%;
+  overflow: visible;
+}
+.hero-title-lead {
+  display: block;
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  margin-bottom: 12px;
+  animation: title-in 0.65s both;
+}
+.hero-title-main {
+  display: block;
+  font-size: clamp(64px, 16.5vw, 218px);
+  font-weight: 850;
+  line-height: 0.94;
+  letter-spacing: -0.075em;
+  animation: title-in 0.8s 0.1s both;
+}
+.hero-art {
+  position: absolute;
+  inset: 120px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  perspective: 1000px;
+}
+.hero-art img {
+  display: block;
+  width: min(100%, 480px);
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 24px 20px #19020a40);
+  animation: bounty-drift 4.5s ease-in-out both;
+}
+.hero-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px 0 8px;
+  position: relative;
+  z-index: 1;
+}
+.hero-actions .button {
+  min-height: 54px;
+  min-width: 145px;
+  font-size: 15px;
+}
+.app-home .button-primary {
+  color: #4a1222;
+  border-color: #f3debb;
+  background: linear-gradient(180deg, #fff8ea, #e8d9bb);
+  box-shadow:
+    inset 0 1px 1px #fff,
+    inset 0 -2px 2px #8f754344,
+    0 3px 8px #16020933;
+}
+.app-home .button-primary:hover {
+  background: linear-gradient(180deg, #fffdf7, #f2e4ca);
+}
+.app-home .button-secondary {
+  color: #f7eddc;
+  border-color: #f7eddc45;
+  background: linear-gradient(180deg, #ffffff12, #ffffff03);
+  box-shadow:
+    inset 0 1px 1px #ffffff20,
+    inset 0 -1px 1px #00000030;
+}
+.app-home .button-secondary:hover {
+  background: #ffffff12;
+}
+@keyframes title-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes bounty-drift {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) rotateY(-8deg) rotate(-3deg);
+  }
+  18% {
+    opacity: 1;
+  }
+  55% {
+    transform: translateY(-8px) rotateY(5deg) rotate(2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotateY(0) rotate(0);
+  }
+}
+@media (min-width: 768px) {
+  .hero-title {
+    top: 16px;
+  }
+  .hero-title-lead {
+    font-size: 32px;
+    margin-bottom: 6px;
+  }
+  .hero-art {
+    top: 135px;
+  }
+  .hero-art img {
+    width: min(65%, 540px);
+  }
+  .hero-actions .button {
+    min-width: 174px;
+  }
+}
+@media (max-width: 360px) {
+  .hero-title-main {
+    font-size: 17vw;
+  }
+  .hero-actions .button {
+    min-width: 0;
+    flex: 1;
+    padding-inline: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-title-lead,
+  .hero-title-main,
+  .hero-art img {
+    animation: none;
+  }
+}
